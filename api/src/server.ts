@@ -39,19 +39,48 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 // Never returns fingerprint data.
+app.get("/api/people/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "شناسه نامعتبر" });
+  }
+  try {
+    const person = await prisma.person.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        fullName: true,
+        nationalId: true,
+        phone: true,
+        createdAt: true,
+      },
+    });
+    if (!person) return res.status(404).json({ error: "کاربر پیدا نشد" });
+    return res.json({ person });
+  } catch (err) {
+    console.error("[people/:id]", err);
+    return res.status(500).json({ error: "خطای غیرمنتظره" });
+  }
+});
+
 app.get("/api/people", async (_req, res) => {
-  const people = await prisma.person.findMany({
-    select: {
-      id: true,
-      fullName: true,
-      nationalId: true,
-      phone: true,
-      fpFormat: true,
-      createdAt: true,
-    },
-    orderBy: { id: "desc" },
-  });
-  res.json(people);
+  try {
+    const people = await prisma.person.findMany({
+      select: {
+        id: true,
+        fullName: true,
+        nationalId: true,
+        phone: true,
+        fpFormat: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return res.json(people);
+  } catch (err) {
+    console.error("[people list]", err);
+    return res.status(500).json({ error: "خطای غیرمنتظره" });
+  }
 });
 
 app.post("/api/people", async (req, res) => {
@@ -170,5 +199,5 @@ app.post("/api/people", async (req, res) => {
 const port = Number(process.env.PORT ?? 3000);
 // Bound to loopback: only this PC can reach the API.
 app.listen(port, "127.0.0.1", () =>
-  console.log(`API listening on http://localhost:${port}`)
+  console.log(`API listening on http://localhost:${port}`),
 );

@@ -22,12 +22,52 @@ import {
   biominiCapture,
   biominiDebug,
   biominiStatus,
+  dbQuery,
+  dbEnroll,
+  dbIdentify,
+  dbDeleteAll,
 } from "./biomini";
 
 const app = express();
 app.use(cors({ origin: ["http://localhost:5173", "http://127.0.0.1:5173"] }));
 app.use(express.json({ limit: "10mb" }));
 // Real scanner: these routes are registered first, so the mock routes below never run.
+const fail = (res: any, err: unknown) =>
+  res
+    .status((err as { status?: number }).status ?? 502)
+    .json({ error: err instanceof Error ? err.message : "خطا" });
+
+app.post("/api/db/clear", async (_q, res) => {
+  try {
+    await dbDeleteAll();
+    res.json({ ok: true });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+app.get("/api/db/query", async (_q, res) => {
+  try {
+    res.json({ ids: await dbQuery() });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+app.post("/api/db/enroll", async (req, res) => {
+  try {
+    await dbEnroll(String(req.query.userId ?? ""));
+    res.json({ ok: true });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+app.post("/api/db/identify", async (_q, res) => {
+  try {
+    res.json({ matchedId: await dbIdentify() });
+  } catch (e) {
+    fail(res, e);
+  }
+});
 if (process.env.AGENT_MODE === "biomini") {
   console.log("Mode: real scanner via BioMiniWebAgent");
   app.get("/api/status", async (_req, res) => {
@@ -74,13 +114,13 @@ app.post("/api/capture", (req, res) => {
             .createHash("sha512")
             .update(`mock-finger:${finger}:${i}`)
             .digest()
-            .subarray(0, 64)
-        )
+            .subarray(0, 64),
+        ),
       )
     : crypto.randomBytes(384);
   setTimeout(
     () => res.json({ template: bytes.toString("base64"), format: "MOCK" }),
-    600
+    600,
   );
 });
 
@@ -95,5 +135,5 @@ app.post("/api/match", (req, res) => {
 
 const port = Number(process.env.AGENT_PORT ?? 8443);
 app.listen(port, "127.0.0.1", () =>
-  console.log(`Mock scanner agent on http://localhost:${port}`)
+  console.log(`Mock scanner agent on http://localhost:${port}`),
 );

@@ -22,7 +22,10 @@ const tlsAgent = new https.Agent({
 });
 
 export class BiominiError extends Error {
-  constructor(message: string, public status = 502) {
+  constructor(
+    message: string,
+    public status = 502,
+  ) {
     super(message);
   }
 }
@@ -55,7 +58,7 @@ function retOk(reply: Reply): boolean {
 function call(
   path: string,
   params: Record<string, string | number> = {},
-  timeoutMs = 15000
+  timeoutMs = 15000,
 ): Promise<Reply> {
   const qs = new URLSearchParams({ dummy: String(Math.random()) });
   for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
@@ -83,16 +86,16 @@ function call(
               "[biomini]",
               path,
               "reply is not JSON:",
-              body.slice(0, 300)
+              body.slice(0, 300),
             );
             reject(
               new BiominiError(
-                `پاسخ نامعتبر از BioMiniWebAgent (HTTP ${res.statusCode})`
-              )
+                `پاسخ نامعتبر از BioMiniWebAgent (HTTP ${res.statusCode})`,
+              ),
             );
           }
         });
-      }
+      },
     );
     req.on("timeout", () => req.destroy(new Error("TIMEOUT")));
     req.on("error", (err: NodeJS.ErrnoException) => {
@@ -102,8 +105,8 @@ function call(
           `به BioMiniWebAgent وصل نشد (${
             err.code ?? err.message
           }). برنامه BioMiniWebAgent.exe را اجرا کنید.`,
-          503
-        )
+          503,
+        ),
       );
     });
     req.end();
@@ -128,7 +131,7 @@ async function initScanner(): Promise<ScannerInfo | null> {
   if (!scanner)
     console.error(
       "[biomini] initDevice found no scanner. Reply:",
-      JSON.stringify(r).slice(0, 300)
+      JSON.stringify(r).slice(0, 300),
     );
   return scanner;
 }
@@ -147,7 +150,7 @@ export async function biominiStatus(): Promise<{
   if (v !== undefined && Number(v) !== 0) {
     console.error(
       "[biomini] getScannerStatus failed:",
-      JSON.stringify(s).slice(0, 300)
+      JSON.stringify(s).slice(0, 300),
     );
     scanner = null;
     return { mode: "device", scannerConnected: false };
@@ -160,7 +163,7 @@ async function doCapture(): Promise<{ template: string; format: string }> {
     if (!scanner) await initScanner();
     if (!scanner) {
       throw new BiominiError(
-        "اسکنر پیدا نشد. کابل USB را بررسی کنید و برنامه‌های دیگری که از اسکنر استفاده می‌کنند را ببندید."
+        "اسکنر پیدا نشد. کابل USB را بررسی کنید و برنامه‌های دیگری که از اسکنر استفاده می‌کنند را ببندید.",
       );
     }
 
@@ -169,12 +172,12 @@ async function doCapture(): Promise<{ template: string; format: string }> {
     const cap = await call(
       "/api/captureSingle",
       { sHandle: handle, id: pageId, resetTimer: 30000 },
-      45000
+      45000,
     );
     // CHANGED 1: was `if (cap.retValue !== 0)`
     if (!retOk(cap))
       throw new BiominiError(
-        `اسکن انجام نشد: ${cap.retString ?? "خطای نامشخص"}`
+        `اسکن انجام نشد: ${cap.retString ?? "خطای نامشخص"}`,
       );
 
     const tpl = await call("/api/getTemplateData", {
@@ -194,7 +197,7 @@ async function doCapture(): Promise<{ template: string; format: string }> {
       throw new BiominiError(
         `استخراج اثر انگشت انجام نشد (کیفیت پایین؟): ${
           tpl.retString ?? ""
-        }. دوباره اسکن کنید.`
+        }. دوباره اسکن کنید.`,
       );
     }
 
@@ -219,7 +222,7 @@ export function biominiCapture(): Promise<{
 // ---- Diagnostics: GET http://localhost:8443/api/debug shows the agent's raw replies ----
 
 function rawGet(
-  path: string
+  path: string,
 ): Promise<{ httpStatus?: number; body?: string; error?: string }> {
   const sep = path.includes("?") ? "&" : "?";
   return new Promise((resolve) => {
@@ -238,13 +241,13 @@ function rawGet(
         res.setEncoding("utf8");
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () =>
-          resolve({ httpStatus: res.statusCode, body: body.slice(0, 1500) })
+          resolve({ httpStatus: res.statusCode, body: body.slice(0, 1500) }),
         );
-      }
+      },
     );
     req.on("timeout", () => req.destroy(new Error("TIMEOUT")));
     req.on("error", (err: NodeJS.ErrnoException) =>
-      resolve({ error: `${err.code ?? ""} ${err.message}`.trim() })
+      resolve({ error: `${err.code ?? ""} ${err.message}`.trim() }),
     );
     req.end();
   });
@@ -272,10 +275,86 @@ export async function biominiDebug(): Promise<Record<string, unknown>> {
     const handle = parse(init.body).ScannerInfos?.[0]?.DeviceHandle;
     if (handle !== undefined)
       out.getScannerStatus = await rawGet(
-        `/api/getScannerStatus?sHandle=${handle}`
+        `/api/getScannerStatus?sHandle=${handle}`,
       );
   } catch {
     /* reported in the raw reply above */
   }
   return out;
+}
+
+async function needScanner(): Promise<ScannerInfo> {
+  if (!scanner) await initScanner();
+  if (!scanner) throw new BiominiError("اسکنر پیدا نشد.");
+  return scanner;
+}
+
+export async function dbQuery(): Promise<string[]> {
+  const s = await needScanner();
+  const r: any = await call("/db/queryData", { sHandle: s.DeviceHandle });
+  if (!retOk(r)) throw new BiominiError(`queryData: ${r.retString ?? ""}`);
+  const n = parseInt(r.db?.size ?? "0", 10);
+  return Array.from({ length: n }, (_, i) => String(r.db[i].id));
+}
+
+async function dbRemoveUser(userId: string): Promise<void> {
+  const s = await needScanner();
+  const ids = await dbQuery();
+  const index = ids.indexOf(userId);
+  if (index === -1) return;
+  const r: any = await call("/db/delete", {
+    sHandle: s.DeviceHandle,
+    userSerialNo: index,
+  });
+  if (!retOk(r)) throw new BiominiError(`delete: ${r.retString ?? ""}`);
+}
+
+export async function dbEnroll(userId: string): Promise<void> {
+  const s = await needScanner();
+  // A failed earlier try can leave a half-made entry. Remove it first.
+  await dbRemoveUser(userId);
+  const ids = await dbQuery();
+  const r: any = await call(
+    "/db/enroll",
+    {
+      sHandle: s.DeviceHandle,
+      id: pageId,
+      userID: userId,
+      userSerialNo: ids.length,
+      selectTemplate: 0,
+      encrypt: 0,
+      encryptKey: "",
+      extractEx: 0,
+      qualityLevel: QUALITY_LEVEL,
+    },
+    60000,
+  );
+  if (!retOk(r)) {
+    // Do not leave a half-made entry behind.
+    await dbRemoveUser(userId).catch(() => undefined);
+    throw new BiominiError(`enroll: ${r.retString ?? "ناموفق"}`);
+  }
+}
+
+export async function dbIdentify(): Promise<string | null> {
+  const s = await needScanner();
+  const r: any = await call(
+    "/db/identify",
+    {
+      sHandle: s.DeviceHandle,
+      id: pageId,
+      extractEx: 0,
+      qualityLevel: QUALITY_LEVEL,
+    },
+    60000,
+  );
+  const idx = Number(r.matchedIndex);
+  if (Number.isFinite(idx)) return idx === -1 ? null : String(r.matchedID);
+  throw new BiominiError(`identify: ${r.retString ?? "پاسخ نامعتبر"}`);
+}
+
+export async function dbDeleteAll(): Promise<void> {
+  const s = await needScanner();
+  const r: any = await call("/db/deleteAll", { sHandle: s.DeviceHandle });
+  if (!retOk(r)) throw new BiominiError(`deleteAll: ${r.retString ?? ""}`);
 }

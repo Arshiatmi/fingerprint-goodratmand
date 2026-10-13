@@ -9,6 +9,8 @@ import PeopleList from "./PeopleList";
 
 type Notice = { kind: "info" | "ok" | "error"; text: string } | null;
 
+const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? "http://localhost:8443";
+
 const emptyForm = { fullName: "", nationalId: "", phone: "" };
 const STATUS_TEXT: Record<AgentStatus["state"], { cls: string; text: string }> =
   {
@@ -27,11 +29,36 @@ const STATUS_TEXT: Record<AgentStatus["state"], { cls: string; text: string }> =
     },
   };
 
+/** Teaches the scanner this finger. userId = the person's database id,
+ *  so the identify page can find the person again. */
+async function enrollInScanner(personId: number): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 70000);
+  try {
+    const res = await fetch(
+      `${AGENT_URL}/api/db/enroll?userId=${encodeURIComponent(String(personId))}`,
+      { method: "POST", signal: controller.signal },
+    );
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) throw new Error(body.error ?? `خطای اسکنر (${res.status})`);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("زمان اسکن تمام شد.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default function EnrollForm() {
   const [form, setForm] = useState(emptyForm);
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
+  // Set when the person is saved but the scanner has not learned the finger yet.
+  const [pendingId, setPendingId] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
 
   const [status, setStatus] = useState<AgentStatus | null>(null);
@@ -61,6 +88,34 @@ export default function EnrollForm() {
     }
   }
 
+  async function runScannerEnroll(id: number) {
+    setEnrolling(true);
+    setNotice({
+      kind: "info",
+      text: "حالا همان انگشت را یک بار دیگر روی اسکنر بگذارید تا برای شناسایی ثبت شود.",
+    });
+    try {
+      await enrollInScanner(id);
+      setPendingId(null);
+      setNotice({
+        kind: "ok",
+        text: `ثبت کامل شد. شماره رکورد: ${id.toLocaleString("fa-IR", {
+          useGrouping: false,
+        })}`,
+      });
+    } catch (err) {
+      setPendingId(id);
+      setNotice({
+        kind: "error",
+        text: `اطلاعات ذخیره شد، اما ثبت در اسکنر انجام نشد: ${
+          (err as Error).message
+        } با دکمه «تلاش دوباره» دوباره امتحان کنید.`,
+      });
+    } finally {
+      setEnrolling(false);
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!scan) {
@@ -68,6 +123,7 @@ export default function EnrollForm() {
       return;
     }
     setSaving(true);
+    let savedId: number | null = null;
     try {
       const res = await fetch("/api/people", {
         method: "POST",
@@ -84,12 +140,7 @@ export default function EnrollForm() {
       };
       if (!res.ok)
         throw new Error(body.error ?? `ذخیره انجام نشد (خطای ${res.status})`);
-      setNotice({
-        kind: "ok",
-        text: `ذخیره شد. شماره رکورد: ${(body.id ?? 0).toLocaleString("fa-IR", {
-          useGrouping: false,
-        })}`,
-      });
+      savedId = body.id ?? null;
       setForm(emptyForm);
       setScan(null);
       setRefreshKey((k) => k + 1);
@@ -98,16 +149,20 @@ export default function EnrollForm() {
     } finally {
       setSaving(false);
     }
+
+    if (savedId !== null) await runScannerEnroll(savedId);
   }
 
   const st = status ? STATUS_TEXT[status.state] : null;
+  const busy = scanning || saving || enrolling;
 
   return (
     <main className="shell">
       <form className="panel" onSubmit={onSubmit}>
         <h1>ثبت اثر انگشت</h1>
         <p className="lede">
-          اطلاعات را وارد کنید، یک انگشت را اسکن کنید و ذخیره کنید.
+          اطلاعات را وارد کنید، یک انگشت را اسکن کنید و ذخیره کنید. بعد از ذخیره،
+          باید همان انگشت را یک بار دیگر بگذارید.
         </p>
         {st && (
           <div className={`status ${st.cls}`} role="status">
@@ -153,7 +208,7 @@ export default function EnrollForm() {
             type="button"
             className="secondary"
             onClick={onScan}
-            disabled={scanning || saving}
+            disabled={busy}
           >
             {scanning ? "در حال اسکن…" : scan ? "اسکن مجدد" : "اسکن اثر انگشت"}
           </button>
@@ -162,9 +217,23 @@ export default function EnrollForm() {
           </span>
         </div>
 
-        <button type="submit" disabled={saving || scanning || !scan}>
-          {saving ? "در حال ذخیره…" : "ذخیره"}
+        <button type="submit" disabled={busy || !scan}>
+          {saving
+            ? "در حال ذخیره…"
+            : enrolling
+              ? "در حال ثبت در اسکنر…"
+              : "ذخیره"}
         </button>
+
+        {pendingId !== null && !enrolling && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => runScannerEnroll(pendingId)}
+          >
+            تلاش دوباره برای ثبت در اسکنر
+          </button>
+        )}
 
         <p
           className={`notice ${notice?.kind ?? ""}`}
