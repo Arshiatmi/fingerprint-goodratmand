@@ -1,0 +1,13 @@
+{
+  "name": "fingerprint-app",
+  "private": true,
+  "workspaces": ["api", "agent", "web"],
+  "scripts": {
+    "db:setup": "npm run db:setup -w api",
+    "dev": "concurrently -n agent,api,web -c cyan,green,magenta \"npm run dev -w agent\" \"npm run dev -w api\" \"npm run dev -w web\"",
+    "typecheck": "npm run typecheck -w api && npm run typecheck -w agent && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite keeps setup to zero. To use PostgreSQL later, change provider to
+// "postgresql" and DATABASE_URL to your connection string. Nothing else changes.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Person {
+  id          Int      @id @default(autoincrement())
+  fullName    String
+  nationalId  String?  @unique
+  phone       String?
+  // AES-256-GCM blob: iv(12) + authTag(16) + ciphertext. Never the raw template.
+  fingerprint Bytes
+  fpFormat    String
+  createdAt   DateTime @default(now())
+}
